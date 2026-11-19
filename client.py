@@ -10,6 +10,7 @@ from mcp_types import TextContent
 
 from constants import MAX_TOOL_TURNS, MODEL_API_KEY, MODEL_API_URL, MODEL_NAME
 
+SESSION_MEMORY: list[dict] = []
 
 # ─── YOUR model call (replaces anthropic.messages.create) ───────
 def call_model(messages: list[dict], tools: list[dict]) -> dict:
@@ -61,7 +62,9 @@ async def process_query(client: Client, query: str, memory: list) -> str:
     available_tools = mcp_tools_to_openai(tool_list_result.tools)
 
     # Seed the conversation
-    messages = [{"role": "system", "content":"Your Name is CloudBot. A friendly helper that helps the user and answer his questions based on the context provided to you. If you don't know the answer just ask the user to contact HR."}] + memory + [{"role": "user", "content": query}]
+    SESSION_MEMORY.append({"role": "user", "content": query})
+    messages = SESSION_MEMORY          # ← pass the full history, not a fresh list
+    
     final_parts: list[str] = []
 
     for turn in range(MAX_TOOL_TURNS):
@@ -75,6 +78,7 @@ async def process_query(client: Client, query: str, memory: list) -> str:
         if not tool_calls:
             # No more tools — this is the final answer
             final_parts.append(choice.get("content", ""))
+
             return "\n".join(final_parts)
 
         # Model returned tool_calls → execute them all
@@ -133,9 +137,10 @@ async def chat_loop(client: Client) -> None:
             continue
 
         try:
-            answer = await process_query(client, query + memory)
+            answer = await process_query(client, query, memory)
             print(f"\n{answer}\n")
-            memory.append({f"User: {query}", f"CloudBot: {answer}"})
+            memory.append({"User": f"{query}", "CloudBot": f"{answer.strip()}"})
+            print(f"Memory after the first: {memory}")
         except Exception as e:
             print(f"\nError: {e}\n")
 
