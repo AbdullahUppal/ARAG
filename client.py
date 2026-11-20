@@ -15,7 +15,6 @@ SESSION_MEMORY: list[dict] = []
 # ─── YOUR model call (replaces anthropic.messages.create) ───────
 def call_model(messages: list[dict], tools: list[dict]) -> dict:
     """Send messages + tool definitions to YOUR Qwen API.
-
     Returns the parsed response dict (OpenAI-compatible shape).
     """
     response = requests.post(
@@ -56,15 +55,15 @@ def mcp_tools_to_openai(tools) -> list[dict]:
 
 
 # ─── Core loop: query → model → tool calls → results → repeat ──
-async def process_query(client: Client, query: str, memory: list) -> str:
+async def process_query(client: Client, query: str) -> str:
     # Build the OpenAI-style tool list once
     tool_list_result = await client.list_tools()
     available_tools = mcp_tools_to_openai(tool_list_result.tools)
 
     # Seed the conversation
-    SESSION_MEMORY.append({"role": "user", "content": query})
-    messages = SESSION_MEMORY          # ← pass the full history, not a fresh list
-    
+    messages = SESSION_MEMORY
+    messages.append({"role": "user", "content": query})   # ← pass the full history, not a fresh list
+    print(f"Prompt: {messages}")
     final_parts: list[str] = []
 
     for turn in range(MAX_TOOL_TURNS):
@@ -77,8 +76,8 @@ async def process_query(client: Client, query: str, memory: list) -> str:
 
         if not tool_calls:
             # No more tools — this is the final answer
-            final_parts.append(choice.get("content", ""))
-
+            final_parts.append(choice.get("content") or "")
+            SESSION_MEMORY.append({"role": "assistant", "content": final_parts[0]})
             return "\n".join(final_parts)
 
         # Model returned tool_calls → execute them all
@@ -118,13 +117,13 @@ async def process_query(client: Client, query: str, memory: list) -> str:
 
     # Turn cap reached
     final_parts.append(f"[Stopped after {MAX_TOOL_TURNS} tool-call turns]")
+    SESSION_MEMORY.append({"role": "assistant", "content": final_parts[0]})
     return "\n".join(final_parts)
 
 
 # ─── Interactive chat loop ──────────────────────────────────────
 async def chat_loop(client: Client) -> None:
     print("\nMCP Client (Qwen) started. Type 'quit' to exit.\n")
-    memory = []
     while True:
         try:
             query = (await asyncio.to_thread(input, "Query: ")).strip()
@@ -137,10 +136,8 @@ async def chat_loop(client: Client) -> None:
             continue
 
         try:
-            answer = await process_query(client, query, memory)
+            answer = await process_query(client, query)
             print(f"\n{answer}\n")
-            memory.append({"User": f"{query}", "CloudBot": f"{answer.strip()}"})
-            print(f"Memory after the first: {memory}")
         except Exception as e:
             print(f"\nError: {e}\n")
 
